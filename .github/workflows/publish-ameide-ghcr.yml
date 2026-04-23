@@ -66,8 +66,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config submodule.api.url https://github.com/getlago/lago-api.git
-          git config submodule.front.url https://github.com/getlago/lago-front.git
+          git config submodule.api.url https://github.com/ameideio/lago-api.git
+          git config submodule.front.url https://github.com/ameideio/lago-front.git
           git submodule update --init --recursive
 
       - name: Extract Docker metadata
