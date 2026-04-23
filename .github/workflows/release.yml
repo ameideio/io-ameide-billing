@@ -4,6 +4,7 @@ on:
     types: [released]
 jobs:
   release-dispatch:
+    if: github.repository == 'getlago/lago'
     name: Release Dispatch
     runs-on: ubuntu-latest
     steps:
