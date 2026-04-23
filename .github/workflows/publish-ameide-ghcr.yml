@@ -1,0 +1,125 @@
+name: Publish Ameide GHCR Images
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  build-and-publish:
+    name: Build ${{ matrix.component.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - name: api
+            image: ghcr.io/ameideio/io-ameide-billing-api
+            context: ./api
+            dockerfile: ./api/Dockerfile
+            title: io-ameide-billing-api
+            description: Lago API image for Ameide Billing
+            needs_submodules: true
+          - name: front
+            image: ghcr.io/ameideio/io-ameide-billing-front
+            context: ./front
+            dockerfile: ./front/Dockerfile
+            title: io-ameide-billing-front
+            description: Lago front-end image for Ameide Billing
+            needs_submodules: true
+          - name: events-processor
+            image: ghcr.io/ameideio/io-ameide-billing-events-processor
+            context: ./events-processor
+            dockerfile: ./events-processor/Dockerfile
+            title: io-ameide-billing-events-processor
+            description: Lago events processor image for Ameide Billing
+            needs_submodules: false
+          - name: connectors
+            image: ghcr.io/ameideio/io-ameide-billing-connectors
+            context: ./connectors
+            dockerfile: ./connectors/Dockerfile
+            title: io-ameide-billing-connectors
+            description: Lago connectors image for Ameide Billing
+            needs_submodules: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Initialize submodules over HTTPS
+        if: matrix.component.needs_submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config submodule.api.url https://github.com/getlago/lago-api.git
+          git config submodule.front.url https://github.com/getlago/lago-front.git
+          git submodule update --init --recursive
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6
+        with:
+          images: ${{ matrix.component.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=ref,event=tag
+            type=sha,format=short,prefix=sha-
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.component.title }}
+            org.opencontainers.image.description=${{ matrix.component.description }}
+            org.opencontainers.image.vendor=ameideio
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7
+        with:
+          context: ${{ matrix.component.context }}
+          file: ${{ matrix.component.dockerfile }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          secrets: |
+            "BUNDLE_GEMS__CONTRIBSYS__COM=${{ secrets.BUNDLE_GEMS__CONTRIBSYS__COM }}"
+          cache-from: type=gha,scope=${{ matrix.component.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component.name }}
+
+      - name: Generate artifact attestation
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ matrix.component.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

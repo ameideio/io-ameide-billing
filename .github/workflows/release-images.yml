@@ -7,6 +7,7 @@ on:
 
 jobs:
   api:
+    if: github.repository == 'getlago/lago'
     uses: ./.github/workflows/docker-build-multi-arch.yaml
     with:
       image-name: ghcr.io/getlago/api
@@ -19,6 +20,7 @@ jobs:
       repository-token: ${{ secrets.GH_TOKEN }}
 
   front:
+    if: github.repository == 'getlago/lago'
     uses: ./.github/workflows/docker-build-multi-arch.yaml
     with:
       image-name: ghcr.io/getlago/front
@@ -31,6 +33,7 @@ jobs:
       repository-token: ${{ secrets.GH_TOKEN }}
 
   events-processor:
+    if: github.repository == 'getlago/lago'
     uses: ./.github/workflows/docker-build-multi-arch.yaml
     with:
       image-name: ghcr.io/getlago/events-processor
