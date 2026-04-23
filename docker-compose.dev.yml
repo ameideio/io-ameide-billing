@@ -92,6 +92,7 @@ services:
       - API_URL=https://api.lago.dev
       - APP_DOMAIN=https://app.lago.dev
       - CODEGEN_API=http://api:3000/graphql
+      - LAGO_OIDC_PROVIDER_NAME=${LAGO_OIDC_PROVIDER_NAME:-SSO}
       - LAGO_DISABLE_SIGNUP=${LAGO_DISABLE_SIGNUP:-}
       - LAGO_DISABLE_PDF_GENERATION=${LAGO_DISABLE_PDF_GENERATION:-false}
       - NANGO_SECRET_KEY=${NANGO_SECRET_KEY:-}
@@ -173,6 +174,10 @@ services:
       - DATABASE_TEST_URL=postgresql://${POSTGRES_USER:-lago}:${POSTGRES_PASSWORD:-changeme}@db:5432/lago_test
       - GOOGLE_AUTH_CLIENT_ID=${GOOGLE_AUTH_CLIENT_ID:-}
       - GOOGLE_AUTH_CLIENT_SECRET=${GOOGLE_AUTH_CLIENT_SECRET:-}
+      - LAGO_OIDC_ISSUER=${LAGO_OIDC_ISSUER:-}
+      - LAGO_OIDC_CLIENT_ID=${LAGO_OIDC_CLIENT_ID:-}
+      - LAGO_OIDC_CLIENT_SECRET=${LAGO_OIDC_CLIENT_SECRET:-}
+      - LAGO_OIDC_SCOPES=${LAGO_OIDC_SCOPES:-openid profile email}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api_http.rule=Host(`api.lago.dev`)"
