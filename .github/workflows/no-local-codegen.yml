@@ -1,0 +1,56 @@
+# Block local proto codegen. The contract is that ameide-proto is the
+# single publisher to BSR (`buf push` in its `release.yml`); every
+# other repo consumes generated bindings via the BSR Go modules
+# (`buf.build/gen/go/ameide/ameide/...`) or the npm `@buf/...` packages.
+# Locally regenerated code drifts from BSR silently — fail the PR if
+# anyone tries.
+#
+# Patterns matched against `git ls-files` paths (root-anchored where
+# noted). Covers the canonical outputs of every plugin we use today:
+#   - protoc-gen-go             -> *.pb.go
+#   - protoc-gen-go-grpc        -> *_grpc.pb.go
+#   - protoc-gen-connect-go     -> *.connect.go
+#   - protoc-gen-grpc-gateway   -> *.pb.gw.go
+#   - protoc-gen-es             -> *_pb.{ts,js,d.ts}
+#   - protoc-gen-connect-es     -> *_connect.{ts,js}
+#   - protoc-gen-connect-web    -> *.connect.web.{ts,js}
+#   - protoc-gen-python         -> *_pb2.py / *_pb2.pyi
+#   - protoc-gen-grpc-python    -> *_pb2_grpc.py
+#   - neoeinstein-tonic         -> *.tonic.rs
+#   - protoc-gen-cpp            -> *.pb.{cc,h}
+#   - protoc-gen-openapiv2      -> *.swagger.json, openapi*.{json,yaml}
+#   - FileDescriptorSet         -> descriptor_set*.{bin,pb,binpb}
+#   - any `buf.{yaml,gen*.yaml,work*.yaml}` (root or nested) and
+#     any `proto/` source tree at repo root — proto sources belong
+#     in ameide-proto only.
+#
+# Vendored proto sources / test fixtures under `tests/`, `vendor/`,
+# or `third_party/` are intentionally NOT matched — those are test
+# fixtures or external-API mirrors, not local-regeneration drift.
+# Generated stubs anywhere else (including under `lib/`, `pkg/`, etc.)
+# are still caught.
+name: no-local-codegen
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block local proto codegen
+        run: |
+          set -euo pipefail
+          violations=$(
+            git ls-files \
+              | grep -E '(^|/)(buf\.gen[^/]*\.ya?ml|buf\.work[^/]*\.ya?ml|buf\.yaml|proto/)|\.pb\.(go|cc|h)$|\.pb\.gw\.go$|\.connect\.go$|_pb\.(ts|js|d\.ts)$|_connect\.(ts|js)$|\.connect\.web\.(ts|js)$|_pb2(_grpc)?\.(py|pyi)$|\.tonic\.rs$|\.swagger\.json$|^openapi.*\.(json|ya?ml)$|/openapi.*\.(json|ya?ml)$|descriptor[_-]?set.*\.(bin|pb|binpb)$' \
+              | grep -vE '^(tests|vendor|third_party)/' \
+              || true
+          )
+          if [ -n "$violations" ]; then
+            echo "::error::Local proto codegen detected. Consume BSR-published modules (buf.build/gen/go/ameide/... or @buf/ameide_*) instead of regenerating in this repo."
+            printf '%s\n' "$violations" | sed 's/^/  - /'
+            exit 1
+          fi
+          echo "OK — no local proto codegen artifacts tracked."
