@@ -1,0 +1,194 @@
+# Ameide Marketplace SaaS — Lago catalog (declarative source of truth)
+# =====================================================================
+# WP-2 of io-ameide-marketplace-azure/docs/IMPLEMENTATION-PLAN.md.
+#
+# This file is the *declarative artifact*. `apply.py` reconciles a running
+# Lago instance to exactly this state, idempotently (apply twice -> zero
+# diff; see test/idempotency_test.sh). NO fork patches, NO manual UI.
+#
+# Mechanism decision (WP-2 Step 0): vanilla upstream Lago ships
+#   - NO official Terraform/OpenTofu provider (verified, getlago org)
+#   - NO config-as-code/seed manifest (db/seeds/* are dev fixtures =
+#     Rails code, out of scope for a config-only WP)
+# => the spec's explicit fallback: an idempotent, version-controlled,
+#    diffable REST-API seed. Every resource is addressed by its stable
+#    `code`/`external_id`; the script GETs then POSTs-or-PUTs.
+#
+# ALL MONEY FIGURES ARE INDICATIVE (finance sign-off pending) — they
+# mirror io-ameide-marketplace-azure offers/public-cloud/*.yaml and
+# docs/architecture/README.md -> Billing. Renaming a meter code is a
+# cross-repo breaking change (contract: ameide.marketplace.azure.v1).
+
+currency: USD
+
+# ---------------------------------------------------------------------
+# D1 — 5 billable metrics, keyed EXACTLY by the canonical registry codes
+#       (ameide.marketplace.azure.v1: editor/inference/api/db/blob).
+#
+# Aggregation choice (justified against Lago's model — AGGREGATION_TYPES
+# in api/app/models/billable_metric.rb):
+#   editor    -> unique_count_agg on field `editor_id`. Seats are a
+#                set, not a flow: the billable quantity is the number of
+#                DISTINCT editors active in the period, and re-emitting
+#                the same editor_id must NOT inflate it. sum/count would
+#                double-count heartbeats; unique_count is seat-correct
+#                and lets WP-3 resize via the wallet grant, not the meter.
+#   inference -> sum_agg on `aiu`. AIU is an additive consumption flow;
+#                period quantity = sum of all increments.
+#   api       -> sum_agg on `calls`. Additive call volume. (Priced per
+#                1k at the plan layer; the metric stays raw calls so the
+#                bridge emits an honest unit.)
+#   db        -> latest_agg on `gb`. Provisioned size is a gauge, not a
+#                flow; the period-representative value is the latest
+#                reading (max_agg would penalise a transient spike;
+#                "GB-month" is bridged from this gauge by WP-6).
+#   blob      -> latest_agg on `gb`. Same gauge rationale as db.
+metrics:
+  - code: editor
+    name: "Editor seats"
+    description: "Distinct paid Editor seats active in the period (Viewers are free, never metered)."
+    aggregation_type: unique_count_agg
+    field_name: editor_id
+    recurring: false
+  - code: inference
+    name: "Inference (Ameide Inference Unit)"
+    description: "AIU consumed. 1 AIU = $0.01 provider COGS; billed indicatively at 2x."
+    aggregation_type: sum_agg
+    field_name: aiu
+    recurring: false
+  - code: api
+    name: "API / MCP calls"
+    description: "API and MCP-server tool-call volume (raw calls; priced per 1k at plan layer)."
+    aggregation_type: sum_agg
+    field_name: calls
+    recurring: false
+  - code: db
+    name: "Managed database (relational + vector)"
+    description: "Provisioned managed DB size gauge (GB); latest reading represents the period."
+    aggregation_type: latest_agg
+    field_name: gb
+    recurring: false
+  - code: blob
+    name: "Blob storage"
+    description: "Provisioned object-storage size gauge (GB); latest reading represents the period."
+    aggregation_type: latest_agg
+    field_name: gb
+    recurring: false
+
+# ---------------------------------------------------------------------
+# D2 — Plans mirroring the offer tiers. Monthly interval, no trial
+#      (trial is INCOMPATIBLE with Marketplace Metering — see offer.yaml).
+#
+#      amount_cents = the per-Editor seat price (recurring base).
+#      Every plan also carries the 4 consumption charges priced
+#      FROM UNIT 0 (R1): charge_model `standard`, properties.amount set,
+#      NO `free_units` key. The per-Editor included bundle is NOT a
+#      plan concern — it is the seat-scaled metric-scoped wallet grant
+#      (D3 scaffolding here; WP-3 sizes it at runtime).
+#
+#      `editor` is intentionally NOT charged on the plan: the seat price
+#      is the plan's recurring `amount_cents`; the editor metric exists
+#      so the Lago->Marketplace bridge can emit seat count like any
+#      other dimension. (Charging it again on the plan would double-bill.)
+#
+#      Indicative consumption rates (per offers/public-cloud/plans/*):
+#        inference $0.02 / AIU
+#        api       $0.20 / 1000 calls  -> $0.0002 / call
+#        db        $2.50 / GB
+#        blob      $0.10 / GB
+plan_defaults:
+  interval: monthly
+  pay_in_advance: false
+  trial_period: 0
+  charges:
+    - billable_metric_code: inference
+      charge_model: standard
+      amount: "0.02"          # per AIU
+    - billable_metric_code: api
+      charge_model: standard
+      amount: "0.0002"        # per call ($0.20 / 1000)
+    - billable_metric_code: db
+      charge_model: standard
+      amount: "2.50"          # per GB
+    - billable_metric_code: blob
+      charge_model: standard
+      amount: "0.10"          # per GB
+
+plans:
+  - code: public-preview
+    name: "Public Preview"
+    description: "Free public preview. All meters $0 (Lago still meters for analytics/limits)."
+    amount_cents: 0           # $0 / Editor / mo
+    charges_amount_override: "0"   # promo: every consumption meter $0
+  - code: professional
+    name: "Professional"
+    description: "Entry workspace. $19/Editor/mo; metered consumption beyond the per-Editor wallet grant."
+    amount_cents: 1900        # $19 / Editor / mo (indicative)
+  - code: business
+    name: "Business"
+    description: "Multi-Editor workspace. $29/Editor/mo; same consumption rates as every paid tier."
+    amount_cents: 2900        # $29 / Editor / mo (indicative)
+  - code: enterprise
+    name: "Enterprise"
+    description: "Enterprise workspace. $49/Editor/mo. Custom-annual / Private Cloud via private offer (not this plan)."
+    amount_cents: 4900        # $49 / Editor / mo (indicative)
+
+# ---------------------------------------------------------------------
+# D3 — Wallet + WalletTarget (metric-scoped) + recurring refill rule
+#      SCAFFOLDING. This is a TEMPLATE, not a per-customer wallet:
+#      WP-3 creates the real wallet per subscription, sizing
+#      target_ongoing_balance = editorSeats x bundle. WP-2 proves the
+#      shape works on this vanilla fork and pins the parameters.
+#
+#      Vanilla-Lago mechanism (verified, NO patch):
+#        POST /api/v1/wallets accepts
+#          applies_to.billable_metric_codes: []   -> WalletTarget rows
+#          recurring_transaction_rules:
+#            trigger: interval        (the spec's `source: interval`)
+#            interval: monthly        (refill at cycle anchor -> T-L3)
+#            method:  target          (target_ongoing_balance ->
+#                                      mid-cycle seat resize = T-L4,
+#                                      WP-3 updates the target)
+#      The wallet is customer/org-scoped (Wallet belongs_to customer),
+#      so the grant pools org-wide across all the org's Editors (T-L5),
+#      NOT per-subscription — matches the architecture doc.
+#
+#      R1 honoured: the included bundle is THIS wallet grant, never a
+#      plan `free_units`. The four consumption charges above price from
+#      unit 0; the wallet's credit balance absorbs the bundled amount.
+#
+#      rate_amount: 1 credit == 1 USD (Lago wallet credit unit). The
+#      bundle is expressed as a per-Editor USD value of included usage;
+#      WP-3 multiplies by seat count into target_ongoing_balance.
+wallet_template:
+  name: "Ameide bundle wallet"
+  rate_amount: "1"            # 1 credit = 1 USD
+  currency: USD
+  # Metric-scoped: grant is spendable ONLY against these four meters.
+  # `editor` is deliberately excluded (seat price is the plan base).
+  applies_to_billable_metric_codes:
+    - inference
+    - api
+    - db
+    - blob
+  # Per-Editor included bundle, valued at the indicative plan rates:
+  #   25 AIU      x $0.02   = $0.50
+  #   1000 api    x $0.0002 = $0.20
+  #   1   GB blob x $0.10   = $0.10
+  #   0.25 GB db  x $2.50   = $0.625
+  #   ---------------------------------
+  #   per-Editor included value          = $1.425  (indicative)
+  per_editor_bundle:
+    aiu: 25
+    api_calls: 1000
+    blob_gb: 1
+    db_gb: 0.25
+    indicative_usd_value: "1.425"
+  recurring_transaction_rule:
+    trigger: interval         # = spec "source: interval"
+    interval: monthly         # refills at the billing cycle anchor (T-L3)
+    method: target            # target_ongoing_balance (enables T-L4 resize)
+    # target_ongoing_balance is set PER WALLET by WP-3:
+    #   editorSeats * per_editor_bundle.indicative_usd_value
+    # The template records the per-seat unit; no fixed total here.
+    target_ongoing_balance_per_editor: "1.425"
