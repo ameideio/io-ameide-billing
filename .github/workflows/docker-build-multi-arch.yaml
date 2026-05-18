@@ -113,7 +113,7 @@ on:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
 
@@ -297,7 +297,7 @@ jobs:
           retention-days: 1
 
   merge:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     needs: [build]
     outputs:
       image-tag: ${{ steps.summary.outputs.image-tag }}

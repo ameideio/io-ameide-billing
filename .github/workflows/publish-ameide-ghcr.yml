@@ -22,7 +22,7 @@ permissions:
 jobs:
   build-and-publish:
     name: Build ${{ matrix.component.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     timeout-minutes: 90
     strategy:
       fail-fast: false

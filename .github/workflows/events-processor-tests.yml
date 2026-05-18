@@ -15,7 +15,7 @@ on:
 jobs:
   test:
     name: Run go tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     defaults:
       run:
         working-directory: ./events-processor

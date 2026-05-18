@@ -7,7 +7,7 @@ on:
 jobs:
   docker-ci:
     name: Docker CI
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     steps:
       - uses: actions/checkout@v4
         with:

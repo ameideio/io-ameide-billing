@@ -6,7 +6,7 @@ jobs:
   release-dispatch:
     if: github.repository == 'getlago/lago'
     name: Release Dispatch
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
     steps:
       - name: API Dispatch
         uses: peter-evans/repository-dispatch@v2
