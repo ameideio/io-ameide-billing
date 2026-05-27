@@ -297,7 +297,7 @@ jobs:
           retention-days: 1
 
   merge:
-    runs-on: ${{ vars.AMEIDE_RUNS_ON }}
+    runs-on: ${{ vars.AMEIDE_DIND_RUNS_ON }}
     needs: [build]
     outputs:
       image-tag: ${{ steps.summary.outputs.image-tag }}
